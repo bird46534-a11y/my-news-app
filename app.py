@@ -5,112 +5,110 @@ import datetime
 import pandas as pd
 from dateutil import parser
 import math
-import plotly.express as px
 
-# --- 網頁配置 (針對手機優化) ---
-st.set_page_config(page_title="趨勢推演", layout="centered") # 使用 centered 讓內容更集中
+# --- 網頁配置 (App 化) ---
+st.set_page_config(page_title="全球新聞情報站", layout="centered")
 
-# 自定義 CSS 讓介面更像 App
+# 自定義手機版 CSS
 st.markdown("""
     <style>
-    .reportview-container .main .block-container { padding-top: 1rem; }
+    .stApp { background-color: #f8f9fa; }
+    .search-header { font-size: 24px; font-weight: 800; color: #1a73e8; margin-bottom: 20px; }
     .news-card {
-        background-color: #f0f2f6;
-        border-radius: 10px;
-        padding: 15px;
-        margin-bottom: 10px;
-        border-left: 5px solid #ccc;
+        background-color: white;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
-    .pos-card { border-left: 5px solid #28a745; background-color: #f0fff4; }
-    .neg-card { border-left: 5px solid #dc3545; background-color: #fff5f5; }
-    .news-title { font-size: 16px; font-weight: bold; margin-bottom: 5px; color: #1e1e1e; }
-    .news-meta { font-size: 12px; color: #666; }
-    .tag-label { font-size: 12px; padding: 2px 6px; border-radius: 4px; background: #eee; }
+    .pos-tag { color: #28a745; font-weight: bold; }
+    .neg-tag { color: #dc3545; font-weight: bold; }
+    .neu-tag { color: #6c757d; font-weight: bold; }
+    .time-text { font-size: 12px; color: #888; margin-bottom: 4px; }
+    .title-text { font-size: 16px; font-weight: 600; color: #202124; line-height: 1.4; }
     </style>
     """, unsafe_allow_html=True)
 
-class DataScout:
-    def __init__(self):
-        self.headers = {'User-Agent': 'Mozilla/5.0'}
-
-    def fetch_news(self, topic, days_limit=5):
+class NewsEngine:
+    @staticmethod
+    def get_news(topic):
         url = f"https://news.google.com/rss/search?q={topic}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-        now = datetime.datetime.now(datetime.timezone.utc)
-        news_list = []
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        news_data = []
         try:
-            response = requests.get(url, headers=self.headers, timeout=10)
-            root = ET.fromstring(response.content)
-            for item in root.findall('.//item'):
+            r = requests.get(url, headers=headers, timeout=10)
+            root = ET.fromstring(r.content)
+            for item in root.findall('.//item')[:30]: # 取前30則最相關
                 title = item.find('title').text
-                pub_date = parser.parse(item.find('pubDate').text)
-                days_ago = (now - pub_date).total_seconds() / 86400
-                if days_ago <= days_limit:
-                    weight = round(math.exp(-0.2 * days_ago), 2)
-                    news_list.append({
-                        "標題": title,
-                        "日期": pub_date.astimezone(datetime.timezone(datetime.timedelta(hours=8))),
-                        "權重": weight
-                    })
-            return pd.DataFrame(news_list)
-        except: return pd.DataFrame()
+                pub_date = parser.parse(item.find('pubDate').text).astimezone(datetime.timezone(datetime.timedelta(hours=8)))
+                news_data.append({"title": title, "date": pub_date})
+            return news_data
+        except: return []
 
-class AnalyticsEngine:
-    KWS = {
-        "🔴極負": (['崩盤', '破產', '開戰', '倒閉', '災難', '暴跌'], -5.0),
-        "🟠負面": (['跌', '慘', '危機', '裁員', '爭議', '糾紛', '警告'], -2.5),
-        "🟢正面": (['升', '獲利', '突破', '合作', '補助', '進步', '漲'], 2.0),
-        "🔵極正": (['新高', '成功', '冠軍', '翻倍', '奇蹟', '爆發'], 4.5)
-    }
-    @classmethod
-    def analyze(cls, title):
-        score, tags = 0, []
-        for label, (keywords, val) in cls.KWS.items():
-            for word in keywords:
-                if word in title:
-                    score += val
-                    tags.append(label)
-                    break 
-        return score, (tags[0] if tags else "⚪中性")
+    @staticmethod
+    def quick_analyze(title):
+        # 簡易語義判斷
+        pos = ['漲', '升', '獲利', '突破', '合作', '支持', '新高', '優於預期']
+        neg = ['跌', '慘', '危機', '裁員', '爭議', '崩盤', '警告', '壓力']
+        for w in neg: 
+            if w in title: return "🔴 負面趨勢", "neg-tag"
+        for w in pos: 
+            if w in title: return "🟢 正面動能", "pos-tag"
+        return "⚪ 中性訊息", "neu-tag"
 
 # --- UI 介面 ---
-st.title("🔮 趨勢推演引擎")
-target = st.text_input("輸入目標", placeholder="例如：比特幣")
+st.markdown('<div class="search-header">📰 全球情報搜尋</div>', unsafe_allow_html=True)
 
-if target:
-    with st.spinner('分析中...'):
-        df = DataScout().fetch_news(target)
+# 搜尋列
+query = st.text_input("", placeholder="🔍 輸入關鍵字（如：台積電、原油、AI...）")
 
-        if not df.empty:
-            results = df.apply(lambda x: AnalyticsEngine.analyze(x['標題']), axis=1)
-            df['評分'], df['性質'] = zip(*results)
-            df['動能'] = df['評分'] * df['權重']
-            
-            # 指標看板
-            total_score = df['動能'].sum()
-            st.metric("綜合動能指數", f"{total_score:.2f}")
+# 快捷標籤
+st.caption("熱門搜尋：美股、比特幣、黃金、加權指數")
 
-            # 推演結論 (簡化版適合手機閱讀)
-            if total_score < -15: st.error("🚩 威脅：風險極高，建議避險。")
-            elif total_score > 10: st.success("🏳️ 機遇：情緒向好，建議關注。")
-            else: st.info("🏴 盤整：多空拉鋸，動能不足。")
+if query:
+    data = NewsEngine.get_news(query)
+    
+    if data:
+        # 計算簡易指標
+        pos_count = 0
+        neg_count = 0
+        
+        # 預處理分析
+        for n in data:
+            label, _ = NewsEngine.quick_analyze(n['title'])
+            if "正面" in label: pos_count += 1
+            if "負面" in label: neg_count += 1
+        
+        # 能量儀表板
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"📊 搜尋結果: {len(data)} 則")
+        with col2:
+            sentiment_score = pos_count - neg_count
+            emo = "📈" if sentiment_score > 0 else "📉" if sentiment_score < 0 else "⚖️"
+            st.write(f"動態情緒: {emo}")
 
-            # --- 核心優化：手機卡片式列表 ---
-            st.subheader("📜 關鍵動態")
-            for _, row in df.sort_values('日期', ascending=False).iterrows():
-                # 根據性質決定卡片顏色
-                card_class = "news-card"
-                if "正" in row['性質']: card_class += " pos-card"
-                elif "負" in row['性質']: card_class += " neg-card"
-                
-                # HTML 渲染卡片
-                st.markdown(f"""
-                    <div class="{card_class}">
-                        <div class="news-meta">
-                            <span class="tag-label">{row['性質']}</span> | {row['日期'].strftime('%m-%d %H:%M')}
-                        </div>
-                        <div class="news-title">{row['標題']}</div>
-                        <div class="news-meta">影響權重: {row['權重']}</div>
+        st.divider()
+
+        # 新聞列表
+        for n in data:
+            label, tag_class = NewsEngine.quick_analyze(n['title'])
+            st.markdown(f"""
+                <div class="news-card">
+                    <div class="time-text">{n['date'].strftime('%Y-%m-%d %H:%M')}</div>
+                    <div class="title-text">{n['title']}</div>
+                    <div style="margin-top:8px;">
+                        <span class="{tag_class}" style="font-size:12px;">{label}</span>
                     </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.warning("查無數據。")
+                </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("尚未搜尋到相關即時新聞。")
+else:
+    # 初始歡迎畫面
+    st.markdown("""
+    <div style="text-align: center; color: #888; margin-top: 50px;">
+        <p>請在上方輸入關鍵字開始搜尋</p>
+        <p style="font-size: 12px;">系統將自動分析近期的市場情緒與趨勢</p>
+    </div>
+    """, unsafe_allow_html=True)
