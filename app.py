@@ -7,8 +7,27 @@ from dateutil import parser
 import math
 import plotly.express as px
 
-# 設定網頁標題
-st.set_page_config(page_title="趨勢推演引擎", layout="wide")
+# --- 網頁配置 (針對手機優化) ---
+st.set_page_config(page_title="趨勢推演", layout="centered") # 使用 centered 讓內容更集中
+
+# 自定義 CSS 讓介面更像 App
+st.markdown("""
+    <style>
+    .reportview-container .main .block-container { padding-top: 1rem; }
+    .news-card {
+        background-color: #f0f2f6;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 10px;
+        border-left: 5px solid #ccc;
+    }
+    .pos-card { border-left: 5px solid #28a745; background-color: #f0fff4; }
+    .neg-card { border-left: 5px solid #dc3545; background-color: #fff5f5; }
+    .news-title { font-size: 16px; font-weight: bold; margin-bottom: 5px; color: #1e1e1e; }
+    .news-meta { font-size: 12px; color: #666; }
+    .tag-label { font-size: 12px; padding: 2px 6px; border-radius: 4px; background: #eee; }
+    </style>
+    """, unsafe_allow_html=True)
 
 class DataScout:
     def __init__(self):
@@ -33,8 +52,7 @@ class DataScout:
                         "權重": weight
                     })
             return pd.DataFrame(news_list)
-        except:
-            return pd.DataFrame()
+        except: return pd.DataFrame()
 
 class AnalyticsEngine:
     KWS = {
@@ -50,50 +68,49 @@ class AnalyticsEngine:
             for word in keywords:
                 if word in title:
                     score += val
-                    tags.append(label[:2])
+                    tags.append(label)
                     break 
-        return score, ("".join(list(set(tags))) if tags else "⚪中性")
+        return score, (tags[0] if tags else "⚪中性")
 
 # --- UI 介面 ---
-st.title("🔮 全球動態趨勢推演引擎")
-target = st.text_input("請輸入推演目標（如：台積電、美股、黃金）", placeholder="例如：比特幣")
-days = st.slider("檢索天數", 1, 14, 5)
+st.title("🔮 趨勢推演引擎")
+target = st.text_input("輸入目標", placeholder="例如：比特幣")
 
 if target:
-    with st.spinner('數據採集與演算法推演中...'):
-        scout = DataScout()
-        df = scout.fetch_news(target, days)
+    with st.spinner('分析中...'):
+        df = DataScout().fetch_news(target)
 
         if not df.empty:
-            # 分析
             results = df.apply(lambda x: AnalyticsEngine.analyze(x['標題']), axis=1)
             df['評分'], df['性質'] = zip(*results)
             df['動能'] = df['評分'] * df['權重']
             
-            # 指標計算
-            total_e = df['動能'].sum()
-            hour = datetime.datetime.now().hour
-            t_factor = 1.5 if (23 <= hour or hour <= 5) else 1.0
-            final_score = total_e * t_factor
+            # 指標看板
+            total_score = df['動能'].sum()
+            st.metric("綜合動能指數", f"{total_score:.2f}")
 
-            # 顯示看板
-            col1, col2, col3 = st.columns(3)
-            col1.metric("有效新聞數", len(df))
-            col2.metric("綜合動能指數", f"{final_score:.2f}")
-            col3.metric("天時係數", t_factor)
+            # 推演結論 (簡化版適合手機閱讀)
+            if total_score < -15: st.error("🚩 威脅：風險極高，建議避險。")
+            elif total_score > 10: st.success("🏳️ 機遇：情緒向好，建議關注。")
+            else: st.info("🏴 盤整：多空拉鋸，動能不足。")
 
-            # 結論與建議
-            st.subheader("🔮 推演劇本")
-            if final_score < -15: st.error("【威脅劇本】負面能量堆疊，風險極高。")
-            elif final_score > 10: st.success("【機遇劇本】正面情緒連貫，動能強勁。")
-            else: st.info("【盤整劇本】數據正負抵銷，動能不足。")
-
-            # 視覺化圖表
-            fig = px.bar(df, x='日期', y='動能', hover_data=['標題'], color='評分', title="新聞能量時序分佈")
-            st.plotly_chart(fig, use_container_width=True)
-
-            # 詳細列表
-            st.subheader("📜 關鍵數據明細")
-            st.dataframe(df[['日期', '性質', '權重', '標題']], use_container_width=True)
+            # --- 核心優化：手機卡片式列表 ---
+            st.subheader("📜 關鍵動態")
+            for _, row in df.sort_values('日期', ascending=False).iterrows():
+                # 根據性質決定卡片顏色
+                card_class = "news-card"
+                if "正" in row['性質']: card_class += " pos-card"
+                elif "負" in row['性質']: card_class += " neg-card"
+                
+                # HTML 渲染卡片
+                st.markdown(f"""
+                    <div class="{card_class}">
+                        <div class="news-meta">
+                            <span class="tag-label">{row['性質']}</span> | {row['日期'].strftime('%m-%d %H:%M')}
+                        </div>
+                        <div class="news-title">{row['標題']}</div>
+                        <div class="news-meta">影響權重: {row['權重']}</div>
+                    </div>
+                """, unsafe_allow_html=True)
         else:
-            st.warning("查無相關動態。")
+            st.warning("查無數據。")
