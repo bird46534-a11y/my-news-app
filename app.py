@@ -3,110 +3,115 @@ import requests
 import xml.etree.ElementTree as ET
 import datetime
 from dateutil import parser
-import urllib.parse
 
-# --- 網頁配置 (專為手機窄螢幕優化) ---
-st.set_page_config(page_title="情報搜尋", layout="centered")
+# --- 網頁配置 ---
+st.set_page_config(page_title="最新情報搜尋", layout="centered")
 
-# 自定義 CSS：加強易讀性
+# CSS 優化：強調時間與標題
 st.markdown("""
     <style>
-    /* 調整主容器間距 */
-    .block-container { padding-top: 2rem; padding-bottom: 2rem; }
+    .block-container { padding-top: 1.5rem; }
+    .stTextInput input { font-size: 16px !important; }
     
-    /* 搜尋框加大 */
-    .stTextInput input {
-        font-size: 18px !important;
-        padding: 12px !important;
-        border-radius: 10px !important;
-    }
-
-    /* 新聞卡片優化 */
     .news-box {
         background-color: white;
-        border-radius: 12px;
-        padding: 16px;
-        margin-bottom: 12px;
-        border: 1px solid #eef0f2;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        border-radius: 10px;
+        padding: 14px;
+        margin-bottom: 10px;
+        border: 1px solid #f0f0f0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
-    .title-text {
-        font-size: 18px !important; /* 加大標題字體 */
-        font-weight: 700;
-        color: #1A1C1E;
+    .title-link {
+        font-size: 18px !important;
+        font-weight: 600;
+        color: #1a73e8; /* 連結藍色，更像搜尋結果 */
         line-height: 1.4;
-        margin-bottom: 8px;
-        display: block;
         text-decoration: none;
+        display: block;
+        margin-bottom: 6px;
     }
-    .meta-text {
-        font-size: 13px;
-        color: #6A7074;
+    .meta-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
+        font-size: 13px;
+        color: #5f6368;
     }
-    .tag {
-        padding: 2px 8px;
+    .time-badge {
+        color: #d93025; /* 紅色強調最新時間 */
+        font-weight: bold;
+    }
+    .source-badge {
+        background-color: #f1f3f4;
+        padding: 2px 6px;
         border-radius: 4px;
-        font-weight: 600;
-        font-size: 12px;
     }
-    .tag-blue { background-color: #E8F0FE; color: #1967D2; }
-    .tag-gray { background-color: #F1F3F4; color: #5F6368; }
     </style>
     """, unsafe_allow_html=True)
 
 class NewsScanner:
     @staticmethod
     def fetch_data(query):
-        # 抓取 Google News
         url = f"https://news.google.com/rss/search?q={query}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
         results = []
         try:
             r = requests.get(url, timeout=10)
             root = ET.fromstring(r.content)
-            for item in root.findall('.//item')[:20]: # 限制 20 則減少負擔
-                title = item.find('title').text
+            for item in root.findall('.//item'):
+                full_title = item.find('title').text
                 link = item.find('link').text
+                # 處理日期
                 pub_date = parser.parse(item.find('pubDate').text).astimezone(datetime.timezone(datetime.timedelta(hours=8)))
-                results.append({"title": title, "link": link, "date": pub_date})
-            return results
+                
+                # 拆分標題與來源
+                if ' - ' in full_title:
+                    title = full_title.rsplit(' - ', 1)[0]
+                    source = full_title.rsplit(' - ', 1)[1]
+                else:
+                    title = full_title
+                    source = "新聞"
+                
+                results.append({
+                    "title": title, 
+                    "link": link, 
+                    "date": pub_date, 
+                    "source": source
+                })
+            
+            # --- 核心邏輯：依照時間排序 (由近到遠) ---
+            results.sort(key=lambda x: x['date'], reverse=True)
+            
+            return results[:30] # 回傳前30則最即時的新聞
         except: return []
 
-# --- 主畫面 ---
-st.title("🔍 情報搜尋站")
+# --- UI 介面 ---
+st.title("📰 即時情報掃描")
 
-# 搜尋框
-query = st.text_input("", placeholder="輸入公司名、股號或關鍵字...")
+query = st.text_input("", placeholder="請輸入關鍵字...")
 
 if query:
-    # 快速導航區 (保留簡潔的按鈕)
     mops_url = f"https://mops.twse.com.tw/mops/web/t05st01?stock_id={query}"
-    st.link_button(f"🏛️ 前往「{query}」公開資訊觀測站", mops_url, use_container_width=True)
-    
-    st.divider()
+    st.link_button(f"🏛️ 查看「{query}」官方重大訊息", mops_url, use_container_width=True)
 
-    with st.spinner('搜尋中...'):
+    with st.spinner('正在獲取最新消息...'):
         data = NewsScanner.fetch_data(query)
         
         if data:
+            st.caption(f"已按時間排序，顯示前 {len(data)} 則最新動態")
             for n in data:
-                # 判斷來源標籤 (簡化版)
-                source = n['title'].split(' - ')[-1] if ' - ' in n['title'] else "新聞"
-                display_title = n['title'].split(' - ')[0]
-
-                # 渲染卡片
+                # 格式化日期顯示
+                time_display = n['date'].strftime('%m/%d %H:%M')
+                
                 st.markdown(f"""
                     <div class="news-box">
-                        <a href="{n['link']}" target="_blank" class="title-text">{display_title}</a>
-                        <div class="meta-text">
-                            <div><span class="tag tag-gray">{source}</span></div>
-                            <div>{n['date'].strftime('%m/%d %H:%M')}</div>
+                        <a href="{n['link']}" target="_blank" class="title-link">{n['title']}</a>
+                        <div class="meta-row">
+                            <span class="source-badge">{n['source']}</span>
+                            <span class="time-badge">🕒 {time_display}</span>
                         </div>
                     </div>
                 """, unsafe_allow_html=True)
         else:
-            st.warning("查無資料，請更換關鍵字。")
+            st.warning("查無相關新聞，請嘗試簡短關鍵字。")
 else:
-    st.write("請輸入搜尋目標，系統將即時調閱最新動態。")
+    st.info("輸入後將自動列出最新發布的新聞。")
